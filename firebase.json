@@ -1,9 +1,6 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  },
   "hosting": {
-    "target": "donalu-site",
+    "site": "depositodelivery",
     "public": "dist",
     "ignore": [
       "firebase.json",

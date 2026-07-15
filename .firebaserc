@@ -1,14 +1,5 @@
 {
   "projects": {
-    "default": "dona-lu-4242d"
-  },
-  "targets": {
-    "dona-lu-4242d": {
-      "hosting": {
-        "donalu-site": [
-          "donalu"
-        ]
-      }
-    }
+    "default": "deposito-bebidas-delivery"
   }
 }
