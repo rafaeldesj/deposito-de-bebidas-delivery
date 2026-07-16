@@ -76,16 +76,17 @@ export function CreateStorePage({ onStoreCreated }: CreateStorePageProps) {
 
   return (
     <div style={{
-      height: '100vh',
-      overflowY: 'auto',
+      minHeight: '100vh',
       background: 'var(--bg-primary)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
       padding: '2rem 1rem',
       boxSizing: 'border-box',
     }}>
       <div style={{
         width: '100%',
         maxWidth: '560px',
-        margin: '0 auto',
         background: 'var(--bg-card)',
         borderRadius: '20px',
         border: '1px solid var(--border-color)',
