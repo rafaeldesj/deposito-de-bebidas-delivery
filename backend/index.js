@@ -73,7 +73,7 @@ function nativeRequest(url, method, headers, data) {
 // 1. Rota de sincronização do perfil do usuário com o Supabase (Chamada no fluxo de Registro)
 app.post('/api/users/sync', async (req, res) => {
   try {
-    const { uid, email, name, role, phoneNumber, clientAddress, cpf } = req.body;
+    const { uid, email, name, role, phoneNumber, clientAddress, cpf, tableNumber } = req.body;
     
     if (!uid || !email) {
       return res.status(400).json({ success: false, message: 'UID e Email são obrigatórios.' });
@@ -87,6 +87,7 @@ app.post('/api/users/sync', async (req, res) => {
     if (phoneNumber !== undefined) dbData.phone_number = phoneNumber;
     if (clientAddress !== undefined) dbData.client_address = clientAddress;
     if (cpf !== undefined) dbData.cpf = cpf;
+    if (tableNumber !== undefined) dbData.table_number = tableNumber;
     
     dbData.updated_at = new Date().toISOString();
     
@@ -651,6 +652,154 @@ app.get('/api/pagamentos/check-pix', async (req, res) => {
   } catch (err) {
     console.error('Erro ao verificar Pix:', err);
     return res.status(500).json({ success: false, message: 'Erro interno ao checar Pix.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STORES (MULTI-TENANT)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// S1. Verificar disponibilidade de slug
+app.get('/api/stores/check-slug', async (req, res) => {
+  try {
+    const { slug } = req.query;
+    if (!slug) return res.status(400).json({ success: false, message: 'Slug é obrigatório.' });
+
+    const normalized = slug.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const { data, error } = await supabase
+      .from('stores')
+      .select('id')
+      .eq('slug', normalized)
+      .maybeSingle();
+
+    if (error) throw error;
+    return res.status(200).json({ success: true, available: !data, slug: normalized });
+  } catch (err) {
+    console.error('Erro ao verificar slug:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// S2. Buscar loja por slug (público — carrega o cardápio)
+app.get('/api/stores/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const { data, error } = await supabase
+      .from('stores')
+      .select('*')
+      .eq('slug', slug)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ success: false, message: 'Loja não encontrada.' });
+    return res.status(200).json({ success: true, store: data });
+  } catch (err) {
+    console.error('Erro ao buscar loja:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// S3. Criar loja (owner)
+app.post('/api/stores', async (req, res) => {
+  try {
+    const { slug, name, description, city, phone, logoUrl, theme, primaryColor, ownerUid } = req.body;
+    if (!slug || !name || !ownerUid) {
+      return res.status(400).json({ success: false, message: 'Slug, nome e ownerUid são obrigatórios.' });
+    }
+
+    const normalized = slug.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+    // Verificar slug disponível
+    const { data: existing } = await supabase.from('stores').select('id').eq('slug', normalized).maybeSingle();
+    if (existing) return res.status(409).json({ success: false, message: 'Este slug já está em uso.' });
+
+    const { data, error } = await supabase.from('stores').insert({
+      slug: normalized,
+      name,
+      description,
+      city,
+      phone,
+      logo_url: logoUrl,
+      theme: theme || 'dark',
+      primary_color: primaryColor || '#FFD100',
+      owner_uid: ownerUid,
+    }).select().single();
+
+    if (error) throw error;
+
+    // Atualizar store_id do owner
+    await supabase.from('users').update({ store_id: data.id }).eq('uid', ownerUid);
+
+    return res.status(201).json({ success: true, store: data });
+  } catch (err) {
+    console.error('Erro ao criar loja:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// S4. Atualizar configurações da loja
+app.put('/api/stores/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const { name, description, city, phone, logoUrl, theme, primaryColor, allowCrossStore, requestingUid } = req.body;
+
+    // Buscar loja e verificar se solicitante é owner/dev
+    const { data: store, error: fetchError } = await supabase.from('stores').select('*').eq('slug', slug).maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!store) return res.status(404).json({ success: false, message: 'Loja não encontrada.' });
+
+    const { data: requester } = await supabase.from('users').select('role').eq('uid', requestingUid).maybeSingle();
+    const isAuthorized = requester && (requester.role === 'developer' || store.owner_uid === requestingUid);
+    if (!isAuthorized) return res.status(403).json({ success: false, message: 'Sem permissão para editar esta loja.' });
+
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (city !== undefined) updates.city = city;
+    if (phone !== undefined) updates.phone = phone;
+    if (logoUrl !== undefined) updates.logo_url = logoUrl;
+    if (theme !== undefined) updates.theme = theme;
+    if (primaryColor !== undefined) updates.primary_color = primaryColor;
+
+    // Cooldown de 24h para allow_cross_store
+    if (allowCrossStore !== undefined) {
+      if (store.cross_store_changed_at) {
+        const lastChanged = new Date(store.cross_store_changed_at);
+        const hoursSince = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60);
+        if (hoursSince < 24) {
+          const hoursLeft = Math.ceil(24 - hoursSince);
+          return res.status(429).json({
+            success: false,
+            message: `Esta configuração só pode ser alterada novamente em ${hoursLeft} hora(s).`,
+            hoursLeft,
+          });
+        }
+      }
+      updates.allow_cross_store = allowCrossStore;
+      updates.cross_store_changed_at = new Date().toISOString();
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase.from('stores').update(updates).eq('slug', slug).select().single();
+    if (error) throw error;
+    return res.status(200).json({ success: true, store: data });
+  } catch (err) {
+    console.error('Erro ao atualizar loja:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// S5. Listar lojas (developer only)
+app.get('/api/stores', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('stores').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return res.status(200).json({ success: true, stores: data });
+  } catch (err) {
+    console.error('Erro ao listar lojas:', err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 

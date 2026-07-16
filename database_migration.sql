@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS public.users (
   pagbank_card_brand VARCHAR(50),
   pagbank_card_last_digits VARCHAR(10),
   staff_functions JSONB, -- { cook, attendant, cashier, delivery }
-  temp_password VARCHAR(255)
+  temp_password VARCHAR(255),
+  table_number VARCHAR(50)
 );
 
 -- Índices para otimização de busca em usuários
@@ -178,7 +179,51 @@ CREATE TABLE IF NOT EXISTS public.transactions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ============================================================
+-- MULTI-TENANT: Suporte a múltiplos depósitos por URL
+-- ============================================================
 
+-- 12. TABELA DE LOJAS (DEPÓSITOS)
+CREATE TABLE IF NOT EXISTS public.stores (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug TEXT UNIQUE NOT NULL,                        -- URL amigável: "depositodofulano"
+  owner_uid VARCHAR(255) REFERENCES public.users(uid) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  city TEXT,
+  phone TEXT,
+  logo_url TEXT,
+  theme TEXT DEFAULT 'dark',                        -- 'dark' | 'light'
+  primary_color TEXT DEFAULT '#FFD100',
+  allow_cross_store BOOLEAN DEFAULT FALSE,          -- clientes podem ver outras lojas?
+  cross_store_changed_at TIMESTAMPTZ,               -- cooldown de 24h para alterar a opção
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
+-- Índice para busca rápida por slug
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stores_slug ON public.stores(slug);
+CREATE INDEX IF NOT EXISTS idx_stores_owner ON public.stores(owner_uid);
+
+-- Vincular usuários à loja onde se cadastraram
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.stores(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_users_store ON public.users(store_id);
+
+-- Vincular produtos à loja
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_products_store ON public.products(store_id);
+
+-- Vincular pedidos à loja
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.stores(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_store ON public.orders(store_id);
+
+-- Vincular categorias à loja
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_categories_store ON public.categories(store_id);
+
+-- Vincular configurações à loja
+ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_settings_store ON public.settings(store_id);
 
 

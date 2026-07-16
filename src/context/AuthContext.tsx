@@ -35,6 +35,8 @@ export const mapUserFromDb = (row: any): UserDocument => {
     pagbank_card_last_digits: row.pagbank_card_last_digits,
     staffFunctions: row.staff_functions,
     tempPassword: row.temp_password,
+    tableNumber: row.table_number,
+    storeId: row.store_id,
   };
 };
 
@@ -55,6 +57,8 @@ export const mapUserToDb = (user: Partial<UserDocument>) => {
   if (user.pagbank_card_last_digits !== undefined) dbData.pagbank_card_last_digits = user.pagbank_card_last_digits;
   if (user.staffFunctions !== undefined) dbData.staff_functions = user.staffFunctions;
   if (user.tempPassword !== undefined) dbData.temp_password = user.tempPassword;
+  if (user.tableNumber !== undefined) dbData.table_number = user.tableNumber;
+  if (user.storeId !== undefined) dbData.store_id = user.storeId;
   return dbData;
 };
 

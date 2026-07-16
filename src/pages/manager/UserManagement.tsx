@@ -4,13 +4,16 @@ import { auth } from '../../config/firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { mapUserFromDb, mapUserToDb } from '../../context/AuthContext';
 import type { UserDocument, UserRole, StaffFunctions } from '../../types/user';
-import { Plus, Edit2, Trash2, X, Search, KeyRound, Eye, EyeOff, Filter } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, Search, KeyRound, Eye, EyeOff, Filter, Store } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { logAuditAction } from '../../utils/audit';
+
+interface StoreOption { id: string; slug: string; name: string; }
 
 export const UserManagement = () => {
   const { user, userData } = useAuth();
   const [users, setUsers] = useState<UserDocument[]>([]);
+  const [stores, setStores] = useState<StoreOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -42,13 +45,27 @@ export const UserManagement = () => {
   const [tempPassword, setTempPassword] = useState('');
   const [showTempPassword, setShowTempPassword] = useState(false);
 
+  // Load stores for the depot column
+  useEffect(() => {
+    const loadStores = async () => {
+      const { data } = await supabase.from('stores').select('id, slug, name');
+      setStores(data || []);
+    };
+    loadStores();
+  }, []);
+
   // Escuta usuários em tempo real no Supabase
   useEffect(() => {
     const loadUsers = async () => {
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('*');
+        let query = supabase.from('users').select('*');
+        // owner and manager only see users from their own store
+        if (userData?.role === 'owner' || userData?.role === 'manager') {
+          if (userData.storeId) {
+            query = query.eq('store_id', userData.storeId);
+          }
+        }
+        const { data, error } = await query;
         if (error) throw error;
         setUsers((data || []).map(mapUserFromDb));
       } catch (err) {
@@ -67,7 +84,13 @@ export const UserManagement = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [userData?.role, userData?.storeId]);
+
+  const getStoreName = (storeId?: string | null) => {
+    if (!storeId) return '—';
+    const s = stores.find(st => st.id === storeId);
+    return s ? s.name : '—';
+  };
 
   const openCreateForm = () => {
     setEditUser(null);
@@ -664,6 +687,12 @@ export const UserManagement = () => {
                       </div>
                     )}
                   </th>
+                  <th style={{ minWidth: 120 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Store size={12} style={{ color: 'var(--text-secondary)' }} />
+                      <span>Depósito</span>
+                    </div>
+                  </th>
                   <th style={{ position: 'relative' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <span>Patente</span>
@@ -762,13 +791,19 @@ export const UserManagement = () => {
               <tbody>
                 {filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Nenhum usuário localizado.</td>
+                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Nenhum usuário localizado.</td>
                   </tr>
                 ) : (
                   filteredUsers.map((u) => (
                     <tr key={u.uid}>
                       <td style={{ fontWeight: 600 }}>{u.name}</td>
                       <td>{u.email}</td>
+                      <td>
+                        <span style={{ fontSize: '0.82rem', color: u.storeId ? 'var(--primary-gold)' : 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          {u.storeId && <Store size={11} />}
+                          {getStoreName(u.storeId)}
+                        </span>
+                      </td>
                       <td>
                         <span className="auth-role-badge" style={{ 
                           backgroundColor: 

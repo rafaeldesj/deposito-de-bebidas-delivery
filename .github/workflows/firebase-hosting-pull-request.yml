@@ -21,7 +21,6 @@ jobs:
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DONA_LU_4242D }}
-          projectId: dona-lu-4242d
-          target: donalu-site
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEPOSITO_BEBIDAS_DELIVERY }}
+          projectId: deposito-bebidas-delivery
           firebaseToolsVersion: 13.23.1

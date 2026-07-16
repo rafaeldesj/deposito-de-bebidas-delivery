@@ -1,10 +1,14 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
+import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import type { OrderItem } from './types/order';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LocationProvider, useLocation } from './context/LocationContext';
+import { StoreProvider, useStore } from './context/StoreContext';
 import { AuthButton } from './components/common/AuthButton';
 import { DeliveryMap } from './components/DeliveryMap';
 import type { MapAddress } from './components/DeliveryMap';
+import { LandingPage } from './pages/platform/LandingPage';
+import { CreateStorePage } from './pages/platform/CreateStorePage';
 import { ShieldCheck, ChefHat, CreditCard, Bell, ShoppingCart, Heart, FileText, Users, Navigation, CheckCircle, Clock, Map, Settings, Menu, ChevronDown, Grid } from 'lucide-react';
 import logoDepo from './assets/logo_deposito.png';
 import { supabase } from './config/supabase';
@@ -517,12 +521,65 @@ const MainLayout = () => {
   );
 };
 
+// Store-scoped layout wrapper that reads :slug from the URL
+function StoreLayout() {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  return (
+    <StoreProvider slug={slug || ''}>
+      <StoreLayoutInner onStoreCreated={(s) => navigate(`/${s}`)} />
+    </StoreProvider>
+  );
+}
+
+function StoreLayoutInner({ onStoreCreated }: { onStoreCreated: (s: string) => void }) {
+  const { loading, notFound } = useStore();
+  const { user, userData } = useAuth();
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: '1rem' }}>
+        <div className="spinner" style={{ width: 48, height: 48, borderWidth: 4 }} />
+        <span style={{ color: 'var(--text-secondary)' }}>Carregando depósito...</span>
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: '1rem' }}>
+        <h2 style={{ color: 'var(--primary-gold)', margin: 0 }}>🍺 Depósito não encontrado</h2>
+        <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Este endereço não corresponde a nenhum depósito cadastrado.</p>
+        <a href="/" style={{ color: 'var(--primary-gold)', textDecoration: 'underline' }}>Voltar à página inicial</a>
+      </div>
+    );
+  }
+
+  // Owner sem loja → criar
+  if (user && userData && ['owner', 'developer'].includes(userData.role) && !userData.storeId) {
+    return <CreateStorePage onStoreCreated={onStoreCreated} />;
+  }
+
+  return (
+    <LocationProvider>
+      <MainLayout />
+    </LocationProvider>
+  );
+}
+
 function App() {
   return (
     <AuthProvider>
-      <LocationProvider>
-        <MainLayout />
-      </LocationProvider>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/criar-deposito" element={
+          <AuthProvider>
+            <CreateStorePage onStoreCreated={(slug) => window.location.href = `/${slug}`} />
+          </AuthProvider>
+        } />
+        <Route path="/:slug" element={<StoreLayout />} />
+        <Route path="/:slug/*" element={<StoreLayout />} />
+      </Routes>
     </AuthProvider>
   );
 }

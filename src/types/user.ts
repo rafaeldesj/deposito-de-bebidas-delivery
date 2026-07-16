@@ -33,4 +33,5 @@ export interface UserDocument {
   pagbank_card_brand?: string | null;
   pagbank_card_last_digits?: string | null;
   tableNumber?: string | null;
+  storeId?: string | null;
 }

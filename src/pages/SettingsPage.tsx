@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../config/supabase';
 import { mapUserToDb } from '../context/AuthContext';
 import { mapOrderFromDb } from '../utils/orderMapper';
-import { User, Store, Shield, CreditCard, Save, Trash2, Clock, MapPin, AlertCircle, History, FileText, KeyRound, Plus, Camera, QrCode } from 'lucide-react';
+import { User, Store, Shield, CreditCard, Save, Trash2, Clock, MapPin, AlertCircle, History, FileText, KeyRound, Plus, Camera, QrCode, Sun, Moon, Upload, ToggleLeft, ToggleRight } from 'lucide-react';
 import { logAuditAction } from '../utils/audit';
 import { SecurityCameraSettings } from '../components/SecurityCameraSettings';
 import { TableQrCodeGenerator } from '../components/TableQrCodeGenerator';
@@ -26,12 +26,13 @@ interface StoreConfig {
 export const SettingsPage = () => {
   const { user, userData, updatePhoneNumber } = useAuth();
   
-  // Tabs state: 'profile' (all) | 'store' (admin) | 'loyalty' (admin) | 'advanced' (dev) | 'audit_logs' (admin) | 'commissions' | 'security'
-  const [activeTab, setActiveTab] = useState<'profile' | 'store' | 'loyalty' | 'advanced' | 'audit_logs' | 'commissions' | 'security' | 'mesas'>('profile');
+  // Tabs state
+  const [activeTab, setActiveTab] = useState<'profile' | 'store' | 'loyalty' | 'advanced' | 'audit_logs' | 'commissions' | 'security' | 'mesas' | 'deposito'>('profile');
   
   const role = userData?.role || 'client';
   const isAdmin = ['developer', 'owner', 'manager'].includes(role);
   const isDev = role === 'developer';
+  const isOwnerOrDev = ['developer', 'owner'].includes(role);
 
   // Profile states
   const [profileName, setProfileName] = useState(user?.displayName || '');
@@ -62,6 +63,15 @@ export const SettingsPage = () => {
   const [submittingStore, setSubmittingStore] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
+  // Depósito identity states (owner/dev)
+  interface StoreIdentity { id: string; slug: string; name: string; description?: string; city?: string; phone?: string; logo_url?: string; theme: string; primary_color: string; allow_cross_store: boolean; cross_store_changed_at?: string; }
+  const [storeIdentity, setStoreIdentity] = useState<StoreIdentity | null>(null);
+  const [loadingIdentity, setLoadingIdentity] = useState(false);
+  const [savingIdentity, setSavingIdentity] = useState(false);
+  const [identityMsg, setIdentityMsg] = useState<{ type: 'success' | 'error' | 'warning', text: string } | null>(null);
+  const [storeLogoPreview, setStoreLogoPreview] = useState<string | null>(null);
+  const [crossStoreHoursLeft, setCrossStoreHoursLeft] = useState(0);
+
   // Sync profile details when userData updates
   useEffect(() => {
     if (userData) {
@@ -83,6 +93,93 @@ export const SettingsPage = () => {
       setProfileName(user.displayName);
     }
   }, [user]);
+
+  // Load store identity for owner/dev
+  useEffect(() => {
+    if (!isOwnerOrDev || !userData?.storeId) return;
+    const load = async () => {
+      setLoadingIdentity(true);
+      try {
+        const { data } = await supabase.from('stores').select('*').eq('id', userData.storeId).maybeSingle();
+        if (data) {
+          setStoreIdentity(data);
+          setStoreLogoPreview(data.logo_url || null);
+          // compute cooldown
+          if (data.cross_store_changed_at) {
+            const hours = (Date.now() - new Date(data.cross_store_changed_at).getTime()) / 3600000;
+            setCrossStoreHoursLeft(hours < 24 ? Math.ceil(24 - hours) : 0);
+          }
+        }
+      } finally { setLoadingIdentity(false); }
+    };
+    load();
+  }, [isOwnerOrDev, userData?.storeId]);
+
+  const handleSaveStoreIdentity = async () => {
+    if (!storeIdentity || !user || !userData) return;
+    setSavingIdentity(true);
+    setIdentityMsg(null);
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const payload: any = {
+        name: storeIdentity.name,
+        description: storeIdentity.description,
+        city: storeIdentity.city,
+        phone: storeIdentity.phone,
+        theme: storeIdentity.theme,
+        primaryColor: storeIdentity.primary_color,
+        logoUrl: storeLogoPreview,
+        requestingUid: user.uid,
+      };
+      const res = await fetch(`${API_BASE}/api/stores/${storeIdentity.slug}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message);
+      setStoreIdentity(json.store);
+      setIdentityMsg({ type: 'success', text: 'Configurações do depósito salvas com sucesso!' });
+    } catch (err: any) {
+      setIdentityMsg({ type: 'error', text: err.message });
+    } finally { setSavingIdentity(false); }
+  };
+
+  const handleToggleCrossStore = async () => {
+    if (!storeIdentity || !user) return;
+    if (crossStoreHoursLeft > 0) {
+      setIdentityMsg({ type: 'warning', text: `Esta opção só poderá ser alterada novamente em ${crossStoreHoursLeft} hora(s). Isso evita trocas frequentes que afetam seus clientes.` });
+      return;
+    }
+    setSavingIdentity(true);
+    setIdentityMsg(null);
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+      const res = await fetch(`${API_BASE}/api/stores/${storeIdentity.slug}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowCrossStore: !storeIdentity.allow_cross_store, requestingUid: user.uid }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        if (res.status === 429) { setIdentityMsg({ type: 'warning', text: json.message }); return; }
+        throw new Error(json.message);
+      }
+      setStoreIdentity(json.store);
+      setCrossStoreHoursLeft(24);
+      setIdentityMsg({ type: 'success', text: `Clientes ${json.store.allow_cross_store ? 'agora podem' : 'não podem mais'} ver outros depósitos. Próxima alteração em 24 horas.` });
+    } catch (err: any) {
+      setIdentityMsg({ type: 'error', text: err.message });
+    } finally { setSavingIdentity(false); }
+  };
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setStoreLogoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
 
   // Load global store configurations from Supabase settings table
   useEffect(() => {
@@ -616,24 +713,35 @@ export const SettingsPage = () => {
                 type="button"
                 onClick={() => setActiveTab('store')}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.85rem 1rem',
-                  borderRadius: '12px',
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  padding: '0.85rem 1rem', borderRadius: '12px',
                   border: activeTab === 'store' ? '1px solid var(--primary-gold)' : '1px solid rgba(255,255,255,0.05)',
                   background: activeTab === 'store' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255,255,255,0.02)',
                   color: activeTab === 'store' ? 'var(--primary-gold)' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  transition: 'all 0.2s',
-                  textAlign: 'left'
+                  cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', transition: 'all 0.2s', textAlign: 'left'
                 }}
               >
                 <Store size={16} />
                 <span>Funcionamento</span>
               </button>
+
+              {isOwnerOrDev && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('deposito')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                    padding: '0.85rem 1rem', borderRadius: '12px',
+                    border: activeTab === 'deposito' ? '1px solid var(--primary-gold)' : '1px solid rgba(255,255,255,0.05)',
+                    background: activeTab === 'deposito' ? 'rgba(255,209,0,0.1)' : 'rgba(255,255,255,0.02)',
+                    color: activeTab === 'deposito' ? 'var(--primary-gold)' : 'var(--text-secondary)',
+                    cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', transition: 'all 0.2s', textAlign: 'left'
+                  }}
+                >
+                  <Store size={16} />
+                  <span>Meu Depósito</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -1535,6 +1643,169 @@ export const SettingsPage = () => {
           {/* Aba 7: Segurança e Câmeras IP */}
           {activeTab === 'security' && (isDev || role === 'owner') && (
             <SecurityCameraSettings />
+          )}
+
+          {/* Aba: Meu Depósito */}
+          {activeTab === 'deposito' && isOwnerOrDev && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div className="dashboard-card">
+                <h3 style={{ margin: '0 0 0.25rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Store size={18} style={{ color: 'var(--primary-gold)' }} />
+                  Identidade do Depósito
+                </h3>
+                <p style={{ margin: '0 0 1.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                  Personalize a aparência e as informações públicas do seu depósito.
+                </p>
+
+                {identityMsg && (
+                  <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.85rem 1rem',
+                    borderRadius: '10px',
+                    fontSize: '0.88rem',
+                    background: identityMsg.type === 'success' ? 'rgba(34,197,94,0.1)' : identityMsg.type === 'warning' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                    borderLeft: `4px solid ${identityMsg.type === 'success' ? '#22c55e' : identityMsg.type === 'warning' ? '#f59e0b' : '#ef4444'}`,
+                    color: identityMsg.type === 'success' ? '#22c55e' : identityMsg.type === 'warning' ? '#f59e0b' : '#ef4444',
+                  }}>
+                    {identityMsg.text}
+                  </div>
+                )}
+
+                {loadingIdentity ? (
+                  <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>Carregando...</div>
+                ) : !storeIdentity ? (
+                  <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
+                    Nenhum depósito vinculado a este perfil. Crie seu depósito primeiro.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+                    {/* Logo */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Logo do Depósito</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <img src={storeLogoPreview || 'https://via.placeholder.com/64/1a1f2e/FFD100?text=🍺'} alt="Logo" style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary-gold)' }} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.6rem 1.25rem', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: '10px', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                          <Upload size={16} /> Alterar logo
+                          <input type="file" accept="image/*" onChange={handleLogoFileChange} style={{ display: 'none' }} />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Store Name */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Nome do Depósito</label>
+                      <input type="text" value={storeIdentity.name} onChange={e => setStoreIdentity(prev => prev ? { ...prev, name: e.target.value } : prev)} style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none' }} />
+                    </div>
+
+                    {/* URL (read-only slug display + slug changer) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>URL Atual do Depósito</label>
+                      <div style={{ padding: '0.75rem 1rem', background: 'rgba(255,209,0,0.05)', border: '1px solid rgba(255,209,0,0.2)', borderRadius: '10px', color: 'var(--primary-gold)', fontSize: '0.9rem', fontFamily: 'monospace' }}>
+                        depositodelivery.web.app/<strong>{storeIdentity.slug}</strong>
+                      </div>
+                    </div>
+
+                    {/* Description */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Descrição <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(opcional)</span></label>
+                      <textarea rows={2} value={storeIdentity.description || ''} onChange={e => setStoreIdentity(prev => prev ? { ...prev, description: e.target.value } : prev)} style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none', resize: 'vertical' }} />
+                    </div>
+
+                    {/* City & Phone */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Cidade</label>
+                        <input type="text" value={storeIdentity.city || ''} onChange={e => setStoreIdentity(prev => prev ? { ...prev, city: e.target.value } : prev)} style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none' }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Telefone</label>
+                        <input type="text" value={storeIdentity.phone || ''} onChange={e => setStoreIdentity(prev => prev ? { ...prev, phone: e.target.value } : prev)} style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none' }} />
+                      </div>
+                    </div>
+
+                    {/* Theme */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Tema do Site</label>
+                      <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        {(['dark', 'light'] as const).map(t => (
+                          <button key={t} type="button" onClick={() => setStoreIdentity(prev => prev ? { ...prev, theme: t } : prev)} style={{
+                            flex: 1, padding: '0.75rem', borderRadius: '12px',
+                            border: `2px solid ${storeIdentity.theme === t ? 'var(--primary-gold)' : 'rgba(255,255,255,0.1)'}`,
+                            background: storeIdentity.theme === t ? 'rgba(255,209,0,0.08)' : 'transparent',
+                            color: storeIdentity.theme === t ? 'var(--primary-gold)' : 'var(--text-secondary)',
+                            cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem', transition: 'all 0.2s',
+                          }}>
+                            {t === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t === 'dark' ? 'Escuro' : 'Claro'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Primary Color */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <label style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>Cor Principal</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <input type="color" value={storeIdentity.primary_color} onChange={e => setStoreIdentity(prev => prev ? { ...prev, primary_color: e.target.value } : prev)} style={{ width: 52, height: 52, border: 'none', background: 'none', cursor: 'pointer', borderRadius: '10px' }} />
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Usada em botões, ícones e destaques</span>
+                      </div>
+                    </div>
+
+                    <button type="button" onClick={handleSaveStoreIdentity} disabled={savingIdentity} style={{ padding: '0.85rem 1.5rem', borderRadius: '10px', border: 'none', background: savingIdentity ? '#2a2a2a' : 'var(--primary-gold)', color: savingIdentity ? '#666' : '#121212', fontWeight: 700, fontSize: '0.95rem', cursor: savingIdentity ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', alignSelf: 'flex-start' }}>
+                      <Save size={16} /> {savingIdentity ? 'Salvando...' : 'Salvar Alterações'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Visibilidade de Clientes */}
+              {storeIdentity && (
+                <div className="dashboard-card">
+                  <h3 style={{ margin: '0 0 0.25rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Shield size={18} style={{ color: 'var(--primary-gold)' }} />
+                    Visibilidade de Clientes
+                  </h3>
+                  <p style={{ margin: '0 0 1.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                    Controle se os clientes cadastrados no seu depósito podem visualizar outros depósitos da plataforma.
+                  </p>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.25rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div>
+                      <p style={{ margin: '0 0 0.25rem', fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                        Permitir acesso a outros depósitos
+                      </p>
+                      <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                        {storeIdentity.allow_cross_store
+                          ? '✅ Ativo — seus clientes podem ver e acessar outros depósitos da plataforma.'
+                          : '🔒 Desativado — seus clientes só veem seu próprio depósito.'}
+                      </p>
+                      {crossStoreHoursLeft > 0 && (
+                        <p style={{ margin: '0.5rem 0 0', color: '#f59e0b', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <Clock size={12} />
+                          Próxima alteração disponível em <strong>{crossStoreHoursLeft}h</strong>
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleCrossStore}
+                      disabled={savingIdentity}
+                      title={crossStoreHoursLeft > 0 ? `Aguarde ${crossStoreHoursLeft}h para alterar` : ''}
+                      style={{ background: 'none', border: 'none', cursor: crossStoreHoursLeft > 0 ? 'not-allowed' : 'pointer', opacity: savingIdentity ? 0.5 : 1, transition: 'opacity 0.2s' }}
+                    >
+                      {storeIdentity.allow_cross_store
+                        ? <ToggleRight size={44} style={{ color: '#22c55e' }} />
+                        : <ToggleLeft size={44} style={{ color: 'rgba(255,255,255,0.25)' }} />}
+                    </button>
+                  </div>
+
+                  <p style={{ margin: '0.75rem 0 0', fontSize: '0.78rem', color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>
+                    ⚠️ Esta configuração só pode ser alterada uma vez a cada 24 horas para proteger seus clientes.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
         </main>
